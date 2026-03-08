@@ -1,6 +1,10 @@
 ﻿import asyncio
 import json
+import os
 import re
+import shutil
+import subprocess
+import tempfile
 from typing import Dict, List, Optional, Tuple, Union
 
 from astrbot.api import logger
@@ -109,6 +113,7 @@ class TelegramSender:
         if not data.get("ok"):
             raise RuntimeError(f"Telegram API error: method={method}, data={data}")
         return data
+
     def _download_media_bytes(self, media_url: str) -> Tuple[str, bytes, str]:
         kwargs = {"timeout": self.timeout_secs}
         if self.proxy:
@@ -122,7 +127,11 @@ class TelegramSender:
         resp.raise_for_status()
 
         content = resp.content or b""
-        content_type = (resp.headers.get("content-type") or "application/octet-stream").split(";")[0].strip()
+        content_type = (
+            (resp.headers.get("content-type") or "application/octet-stream")
+            .split(";")[0]
+            .strip()
+        )
 
         ext = "bin"
         if self._is_gif(media_url):
@@ -134,6 +143,58 @@ class TelegramSender:
 
         filename = f"tg_media.{ext}"
         return filename, content, content_type
+
+    def _gif_to_mp4(self, gif_bytes: bytes) -> Optional[bytes]:
+        base_dir = os.path.dirname(__file__)
+        bundled_candidates = [
+            os.path.join(base_dir, "ffmpeg", "ffmpeg"),
+            os.path.join(base_dir, "ffmpeg", "ffmpeg.exe"),
+        ]
+        ffmpeg = None
+        for candidate in bundled_candidates:
+            if os.path.exists(candidate):
+                ffmpeg = candidate
+                break
+        if not ffmpeg:
+            ffmpeg = shutil.which("ffmpeg")
+
+        if not ffmpeg:
+            logger.info("[tg_sender] ffmpeg not found (bundled/system), gif stays document")
+            return None
+        logger.info(f"[tg_sender] using ffmpeg={ffmpeg}")
+        with tempfile.TemporaryDirectory(prefix="tg_gif2mp4_") as tmpdir:
+            in_path = os.path.join(tmpdir, "in.gif")
+            out_path = os.path.join(tmpdir, "out.mp4")
+            with open(in_path, "wb") as f:
+                f.write(gif_bytes)
+
+            cmd = [
+                ffmpeg,
+                "-y",
+                "-i",
+                in_path,
+                "-movflags",
+                "+faststart",
+                "-pix_fmt",
+                "yuv420p",
+                "-vf",
+                "scale=trunc(iw/2)*2:trunc(ih/2)*2",
+                out_path,
+            ]
+            proc = subprocess.run(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+            )
+            if proc.returncode != 0 or (not os.path.exists(out_path)):
+                logger.warning(
+                    f"[tg_sender] gif->mp4 failed rc={proc.returncode}, stderr={proc.stderr.decode('utf-8', errors='ignore')[:200]}"
+                )
+                return None
+
+            with open(out_path, "rb") as f:
+                return f.read()
 
     def _send_single(self, chat_id: ChatId, caption: str, media_url: str) -> None:
         if self._is_gif(media_url):
@@ -215,15 +276,49 @@ class TelegramSender:
 
     def _send_media_group_uploaded(self, chat_id: ChatId, caption: str, media_urls: List[str]) -> None:
         logger.info("[tg_sender] media_group fallback/upload mode")
-        media_items = self._build_media_group_items(media_urls, caption)
 
+        media_items: List[Dict] = []
         files: Dict[str, Tuple[str, bytes, str]] = {}
-        for idx, item in enumerate(media_items):
-            file_key = f"file{idx}"
-            filename, content, content_type = self._download_media_bytes(item["media"])
-            files[file_key] = (filename, content, content_type)
-            item["media"] = f"attach://{file_key}"
 
+        for idx, media_url in enumerate(media_urls[:10]):
+            filename, content, content_type = self._download_media_bytes(media_url)
+
+            media_type = "document"
+            if self._is_video(media_url) or content_type.startswith("video/"):
+                media_type = "video"
+                if not filename.lower().endswith(".mp4"):
+                    filename = "tg_media.mp4"
+            elif self._is_gif(media_url) or content_type == "image/gif":
+                mp4 = self._gif_to_mp4(content)
+                if mp4:
+                    content = mp4
+                    content_type = "video/mp4"
+                    filename = "tg_media.mp4"
+                    media_type = "video"
+                    logger.info("[tg_sender] gif converted to mp4 for media group")
+                else:
+                    media_type = "document"
+            elif self._is_image(media_url) or content_type.startswith("image/"):
+                media_type = "photo"
+                if not re.search(r"\.(jpg|jpeg|png|webp)$", filename, re.IGNORECASE):
+                    filename = "tg_media.jpg"
+                    content_type = "image/jpeg"
+
+            file_key = f"file{idx}"
+            files[file_key] = (filename, content, content_type)
+            item = {"type": media_type, "media": f"attach://{file_key}"}
+            if idx == 0 and caption:
+                item["caption"] = caption
+                item["parse_mode"] = "HTML"
+            media_items.append(item)
+
+        types = [x.get("type", "") for x in media_items]
+        if "document" in types and any(t != "document" for t in types):
+            logger.info("[tg_sender] mixed types with document in upload mode, downgrade all to document")
+            for item in media_items:
+                item["type"] = "document"
+
+        logger.info(f"[tg_sender] upload_media_group_types={[x.get('type') for x in media_items]}")
         payload = {
             "chat_id": str(chat_id),
             "media": json.dumps(media_items, ensure_ascii=False),
@@ -270,4 +365,5 @@ class TelegramSender:
         except Exception as e:
             logger.warning(f"TelegramSender send failed: {e}")
             return False
+
 
