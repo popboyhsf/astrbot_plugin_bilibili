@@ -541,6 +541,69 @@ class Main(Star):
 
         return None
 
+
+    @staticmethod
+    def _extract_dynamic_id_from_url(url: str) -> str | None:
+        target = (url or "").strip()
+        if not target:
+            return None
+        if target.isdigit():
+            return target
+
+        patterns = [
+            r"(?:t\.bilibili\.com|www\.bilibili\.com/opus|m\.bilibili\.com/dynamic)/(\d+)",
+            r"[?&]id=(\d+)",
+        ]
+        for pattern in patterns:
+            match_ = re.search(pattern, target, re.IGNORECASE)
+            if match_:
+                return match_.group(1)
+        return None
+
+    @command("bili_sub_opus")
+    async def sub_opus(self, event: AstrMessageEvent, url: str):
+        """Ignore cache, fetch one dynamic by URL and push it."""
+        sub_user = event.unified_msg_origin
+        if "b23.tv" in (url or ""):
+            url = await self.bili_client.b23_to_bv(url) or url
+
+        dyn_id = self._extract_dynamic_id_from_url(url)
+        if not dyn_id:
+            return MessageEventResult().message("Failed to parse dynamic id from url.")
+
+        item = await self.bili_client.get_dynamic_detail_by_id(dyn_id)
+        if not item:
+            return MessageEventResult().message("Failed to fetch dynamic detail.")
+
+        dyn = {"items": [item]}
+        result_list = await self.dynamic_listener._parse_and_filter_dynamics(
+            dyn,
+            {
+                "uid": "",
+                "filter_types": [],
+                "filter_regex": [],
+                "last": "",
+                "recent_ids": [],
+            },
+        )
+
+        render_data = None
+        parsed_dyn_id = dyn_id
+        for maybe_render_data, maybe_dyn_id in result_list or []:
+            if maybe_render_data:
+                render_data = maybe_render_data
+                if maybe_dyn_id:
+                    parsed_dyn_id = maybe_dyn_id
+                break
+
+        if not render_data:
+            return MessageEventResult().message("Dynamic parse unsupported or failed.")
+
+        await self.dynamic_listener._handle_new_dynamic(
+            sub_user, render_data, parsed_dyn_id, ignore_cache=True
+        )
+        return None
+
     async def terminate(self):
         if (
             hasattr(self, "dynamic_listener_task")

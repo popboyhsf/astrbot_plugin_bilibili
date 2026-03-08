@@ -262,12 +262,13 @@ class DynamicListener:
         sub_user: str,
         render_data: Optional[Dict[str, Any]],
         dyn_id: Optional[str] = None,
+        ignore_cache: bool = False,
     ):
         """处理并发送新的动态通知。"""
         if not render_data:
             return
 
-        cached = self.render_cache.get(dyn_id) if dyn_id else None
+        cached = self.render_cache.get(dyn_id) if (dyn_id and not ignore_cache) else None
         if cached:
             await self._send_dynamic(sub_user, cached["chain"], cached["send_node"])
             return
@@ -280,7 +281,8 @@ class DynamicListener:
         ):
             ls = self._compose_plain_dynamic(render_data)
             await self._send_dynamic(sub_user, ls, send_node_flag)
-            self._cache_render(dyn_id, ls, send_node_flag)
+            if not ignore_cache:
+                self._cache_render(dyn_id, ls, send_node_flag)
             return
 
         img_path = await self.renderer.render_dynamic(render_data)
@@ -291,7 +293,8 @@ class DynamicListener:
             ls = [File(file=img_path, name=filename)]
             ls.append(Plain(f"\n{url}"))
             await self._send_dynamic(sub_user, ls, send_node_flag)
-            self._cache_render(dyn_id, ls, send_node_flag)
+            if not ignore_cache:
+                self._cache_render(dyn_id, ls, send_node_flag)
             return
 
         logger.error("渲染图片失败，尝试发送纯文本消息")

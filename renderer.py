@@ -151,23 +151,42 @@ class Renderer:
             "DYNAMIC_TYPE_WORD",
             "DYNAMIC_TYPE_ARTICLE",
         ):
-            # 图文动态
-            opus = item["modules"]["module_dynamic"]["major"]["opus"]
-            summary = opus["summary"]
-            jump_url = opus["jump_url"]
-            topic = item["modules"]["module_dynamic"]["topic"]
+            # 图文/文字/文章动态：兼容 detail 接口里非 opus 结构
+            module_dynamic = item.get("modules", {}).get("module_dynamic", {})
+            major = module_dynamic.get("major", {}) or {}
+            topic = module_dynamic.get("topic")
+            opus = major.get("opus", {}) or {}
 
-            render_data["summary"] = summary["text"]
-            render_data["text"] = await parse_rich_text(summary, topic)
-            render_data["title"] = opus["title"]
-            render_data["image_urls"] = [pic["url"] for pic in opus["pics"][:9]]
+            summary = opus.get("summary") or module_dynamic.get("desc") or {}
+            summary_text = summary.get("text", "")
+            render_data["summary"] = summary_text
+            if summary_text and summary.get("rich_text_nodes"):
+                render_data["text"] = await parse_rich_text(summary, topic)
+            else:
+                render_data["text"] = "<br>".join(filter(None, summary_text.split("\n")))
+
+            render_data["title"] = opus.get("title", "")
+
+            pics = opus.get("pics") or []
+            if not pics:
+                draw_items = (major.get("draw") or {}).get("items") or []
+                pics = [{"url": pic.get("src", "")} for pic in draw_items if pic.get("src")]
+            if not pics:
+                article_covers = (major.get("article") or {}).get("covers") or []
+                pics = [{"url": cover} for cover in article_covers if cover]
+
+            render_data["image_urls"] = [pic["url"] for pic in pics[:9] if pic.get("url")]
             if not render_data["image_urls"] and self.rai:
                 render_data["image_urls"] = [await image_to_base64(LOGO_PATH)]
+
             if not is_forward:
-                url = f"https:{jump_url}"
+                jump_url = opus.get("jump_url")
+                if jump_url:
+                    url = f"https:{jump_url}" if jump_url.startswith("//") else jump_url
+                else:
+                    url = f"https://t.bilibili.com/{item.get('id_str', '')}"
                 render_data["qrcode"] = await create_qrcode(url)
                 render_data["url"] = url
-            # logger.info(f"返回图文动态 {dyn_id}。")
             return render_data
         elif item.get("type") == "DYNAMIC_TYPE_FORWARD":
             # 转发动态

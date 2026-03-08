@@ -144,6 +144,33 @@ class BiliClient:
             logger.error(f"获取用户动态失败 (UID: {uid}): {e}")
             return None
 
+
+    async def get_dynamic_detail_by_id(self, dynamic_id: str | int) -> Optional[Dict[str, Any]]:
+        """
+        通过动态ID获取单条动态详情，返回 item 字段。
+        """
+        dyn_id = str(dynamic_id).strip()
+        if not dyn_id.isdigit():
+            return None
+
+        url = "https://api.bilibili.com/x/polymer/web-dynamic/v1/detail"
+        headers: Dict[str, str] = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        }
+        params: Dict[str, str] = {"id": dyn_id}
+
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url=url, headers=headers, params=params, timeout=10) as response:
+                    data = await response.json(content_type=None)
+                    item = (data or {}).get("data", {}).get("item")
+                    if not isinstance(item, dict):
+                        return None
+                    return item
+        except Exception as e:
+            logger.error(f"获取动态详情失败 (dynamic_id: {dyn_id}): {e}")
+            return None
+
     async def get_live_info(self, uid: int) -> Optional[Dict[str, Any]]:
         """
         获取用户的直播间信息。
