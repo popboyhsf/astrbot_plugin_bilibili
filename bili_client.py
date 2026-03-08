@@ -1,4 +1,4 @@
-﻿from typing import Any, Awaitable, Callable, Dict, Optional, Tuple
+from typing import Any, Awaitable, Callable, Dict, Optional, Tuple
 
 import aiohttp
 from astrbot.api import logger
