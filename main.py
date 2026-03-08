@@ -44,6 +44,7 @@ class Main(Star):
         self.context = context
 
         self.rai = self.cfg.get("rai", True)
+        self.merge_card_mode = self.cfg.get("merge_card_mode", True)
         self.enable_parse_miniapp = self.cfg.get("enable_parse_miniapp", True)
         self.enable_parse_BV = self.cfg.get("enable_parse_BV", True)
         self.proxy = (self.cfg.get("proxy", "") or "").strip()
@@ -177,6 +178,33 @@ class Main(Star):
             f"✅ 已切换样式为：{info['name']} ({style})"
         )
 
+    @command("bili_merge_card")
+    @permission_type(PermissionType.ADMIN)
+    async def switch_merge_card_mode(
+        self, event: AstrMessageEvent, mode: str | None = None
+    ):
+        """Toggle push format: merged card or element file group."""
+        current = bool(self.cfg.get("merge_card_mode", True))
+        if not mode:
+            status = "on" if current else "off"
+            return MessageEventResult().message(
+                f"merge_card_mode: {status}\\nUse /bili_merge_card on|off"
+            )
+
+        mode_norm = mode.strip().lower()
+        if mode_norm == "on":
+            target = True
+        elif mode_norm == "off":
+            target = False
+        else:
+            return MessageEventResult().message("Invalid arg. Use on/off.")
+
+        self.merge_card_mode = target
+        self.dynamic_listener.merge_card_mode = target
+        self.cfg["merge_card_mode"] = target
+        self.cfg.save_config()
+        status = "on" if target else "off"
+        return MessageEventResult().message(f"merge_card_mode set to: {status}")
     @regex(BV)
     async def get_video_info(self, event: AstrMessageEvent):
         if self.enable_parse_BV:

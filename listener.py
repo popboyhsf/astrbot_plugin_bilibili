@@ -40,6 +40,7 @@ class DynamicListener:
         self.interval_secs = self.interval_mins * 60
         self.task_gap_secs = self._parse_float(cfg.get("task_gap_secs"), 20, minimum=0)
         self.rai = cfg.get("rai", True)
+        self.merge_card_mode = cfg.get("merge_card_mode", True)
         self.node = cfg.get("node", False)
         self.dynamic_limit = cfg.get("dynamic_limit", 5)
         self.render_cache: OrderedDict[str, Dict[str, Any]] = OrderedDict()
@@ -232,6 +233,60 @@ class DynamicListener:
         ]
         return ls
 
+    async def _download_files_from_urls(
+        self, urls: List[str], prefix: str
+    ) -> List[File]:
+        files: List[File] = []
+        seen = set()
+        for url in urls:
+            target = (url or "").strip()
+            if not target or target in seen:
+                continue
+            seen.add(target)
+            path, name = await download_url_to_temp_file(target, filename_prefix=prefix)
+            if path and name:
+                files.append(File(file=path, name=name))
+        return files
+
+    async def _compose_element_chain(self, render_data: Dict[str, Any]) -> List[Any]:
+        chain_parts: List[Any] = []
+
+        title = (render_data.get("title") or "").strip()
+        text = (render_data.get("text") or "").replace("<br>", "\n").strip()
+        url = (render_data.get("url") or "").strip()
+
+        if title:
+            chain_parts.append(Plain(f"{title}\n"))
+        if text:
+            chain_parts.append(Plain(f"{text}\n"))
+        if url:
+            chain_parts.append(Plain(url))
+
+        image_urls = render_data.get("image_urls") or []
+        chain_parts.extend(
+            await self._download_files_from_urls(image_urls, prefix="bili_dynamic_asset_")
+        )
+
+        forward = render_data.get("forward") or {}
+        if forward:
+            f_title = (forward.get("title") or "").strip()
+            f_text = (forward.get("text") or "").replace("<br>", "\n").strip()
+            if f_title or f_text:
+                chain_parts.append(Plain("\n--- forward ---"))
+                if f_title:
+                    chain_parts.append(Plain(f"\n{f_title}"))
+                if f_text:
+                    chain_parts.append(Plain(f"\n{f_text}"))
+            f_images = forward.get("image_urls") or []
+            chain_parts.extend(
+                await self._download_files_from_urls(
+                    f_images, prefix="bili_forward_asset_"
+                )
+            )
+
+        if not chain_parts:
+            chain_parts.append(Plain("Dynamic fetched, but no sendable content."))
+        return chain_parts
     async def _send_dynamic(
         self, sub_user: str, chain_parts: list, send_node: bool = False
     ):
@@ -274,6 +329,16 @@ class DynamicListener:
             return
 
         send_node_flag = self.node
+        if not self.merge_card_mode:
+            ls = await self._compose_element_chain(render_data)
+            await self.context.send_message(
+                sub_user,
+                MessageEventResult(chain=ls).use_t2i(False),
+            )
+            if not ignore_cache:
+                self._cache_render(dyn_id, ls, False)
+            return
+
         # 非图文混合模式
         if not self.rai and render_data.get("type") in (
             "DYNAMIC_TYPE_DRAW",
@@ -327,6 +392,13 @@ class DynamicListener:
             await self.data_manager.update_live_status(sub_user, sub_data["uid"], False)
         if render_data["text"]:
             render_data["qrcode"] = await create_qrcode(link)
+            if not self.merge_card_mode:
+                chain_parts = await self._compose_element_chain(render_data)
+                await self.context.send_message(
+                    sub_user,
+                    MessageEventResult(chain=chain_parts).use_t2i(False),
+                )
+                return
             img_path = await self.renderer.render_dynamic(render_data)
             if img_path:
                 timestamp = int(time.time())

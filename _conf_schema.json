@@ -24,6 +24,12 @@
         "hint": "相邻两个UP主任务的最小间隔，秒数",
         "default": 20
     },
+    "merge_card_mode": {
+        "description": "merge_card_mode",
+        "type": "bool",
+        "hint": "是否合成一张卡",
+        "default": true
+    },
     "rai": {
         "description": "render_as_image",
         "type": "bool",
