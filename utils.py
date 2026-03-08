@@ -1,8 +1,12 @@
 import base64
 import io
+import mimetypes
+import os
 import re
+import tempfile
 from urllib.parse import urlparse
 
+import aiohttp
 import qrcode
 import qrcode.constants
 from astrbot.api import logger
@@ -117,3 +121,38 @@ async def is_height_valid(img_path: str, max_height: int = 25000) -> bool:
     except Exception as e:
         logger.error(f"无法打开图片 {img_path} 进行高度检查: {e}")
         return False
+
+async def download_url_to_temp_file(
+    url: str, filename_prefix: str = "bili_image_"
+) -> tuple[str, str] | tuple[None, None]:
+    """
+    下载远程图片到临时文件并返回(本地路径, 文件名)
+    """
+    if not is_valid_url(url):
+        return None, None
+
+    parsed = urlparse(url)
+    ext = os.path.splitext(parsed.path)[1].lower()
+    if not ext:
+        ext = ".jpg"
+
+    timeout = aiohttp.ClientTimeout(total=15)
+    try:
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with session.get(url) as resp:
+                if resp.status != 200:
+                    return None, None
+
+                content_type = (resp.headers.get("Content-Type") or "").split(";")[0]
+                guessed_ext = mimetypes.guess_extension(content_type) or ""
+                if ext == ".jpg" and guessed_ext:
+                    ext = guessed_ext
+
+                fd, path = tempfile.mkstemp(prefix=filename_prefix, suffix=ext)
+                with os.fdopen(fd, "wb") as f:
+                    f.write(await resp.read())
+
+                return path, os.path.basename(path)
+    except Exception as e:
+        logger.warning(f"下载图片失败: {url}, error={e}")
+        return None, None

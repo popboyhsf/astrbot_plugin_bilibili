@@ -7,14 +7,14 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from astrbot.api import logger
 from astrbot.api.all import *
-from astrbot.api.event import MessageChain, MessageEventResult
-from astrbot.api.message_components import File, Image, Node, Plain
+from astrbot.api.event import MessageEventResult
+from astrbot.api.message_components import File, Node, Plain
 
 from .bili_client import BiliClient
 from .constant import BANNER_PATH, LOGO_PATH
 from .data_manager import DataManager
 from .renderer import Renderer
-from .utils import create_qrcode, create_render_data, image_to_base64, is_height_valid
+from .utils import create_qrcode, create_render_data, download_url_to_temp_file, image_to_base64
 
 
 class DynamicListener:
@@ -230,8 +230,6 @@ class DynamicListener:
             Plain(f"📣 UP 主 「{name}」 发布了新图文动态:\n"),
             Plain(summary),
         ]
-        for pic in render_data.get("image_urls", []):
-            ls.append(Image.fromURL(pic))
         return ls
 
     async def _send_dynamic(
@@ -288,12 +286,9 @@ class DynamicListener:
         img_path = await self.renderer.render_dynamic(render_data)
         if img_path:
             url = render_data.get("url", "")
-            if await is_height_valid(img_path):
-                ls = [Image.fromFileSystem(img_path)]
-            else:
-                timestamp = int(time.time())
-                filename = f"bilibili_dynamic_{timestamp}.jpg"
-                ls = [File(file=img_path, name=filename)]
+            timestamp = int(time.time())
+            filename = f"bilibili_dynamic_{timestamp}.jpg"
+            ls = [File(file=img_path, name=filename)]
             ls.append(Plain(f"\n{url}"))
             await self._send_dynamic(sub_user, ls, send_node_flag)
             self._cache_render(dyn_id, ls, send_node_flag)
@@ -331,18 +326,25 @@ class DynamicListener:
             render_data["qrcode"] = await create_qrcode(link)
             img_path = await self.renderer.render_dynamic(render_data)
             if img_path:
+                timestamp = int(time.time())
+                filename = f"bilibili_live_{timestamp}.jpg"
                 await self.context.send_message(
                     sub_user,
-                    MessageChain().file_image(img_path).message(render_data["url"]),
+                    MessageEventResult(
+                        chain=[File(file=img_path, name=filename), Plain(render_data["url"])]
+                    ).use_t2i(False),
                 )
             else:
                 text = "\n".join(filter(None, render_data.get("text", "").split("\n")))
+                chain_parts = [Plain("渲染图片失败了 (´;ω;`)") , Plain(text)]
+                cover_path, cover_name = await download_url_to_temp_file(
+                    cover_url, filename_prefix="bili_live_cover_"
+                )
+                if cover_path and cover_name:
+                    chain_parts.append(File(file=cover_path, name=cover_name))
                 await self.context.send_message(
                     sub_user,
-                    MessageChain()
-                    .message("渲染图片失败了 (´;ω;`)")
-                    .message(text)
-                    .url_image(cover_url),
+                    MessageEventResult(chain=chain_parts).use_t2i(False),
                 )
 
     async def _get_dynamic_items(self, dyn: Dict, data: Dict):
