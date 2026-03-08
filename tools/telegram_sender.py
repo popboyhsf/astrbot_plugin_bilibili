@@ -33,37 +33,26 @@ class TelegramSender:
 
     def parse_chat_id_from_sub_user(self, sub_user: str) -> Optional[ChatId]:
         raw = (sub_user or "").strip()
-        logger.info(f"[tg_sender] parse sub_user={raw}")
         if not raw:
-            logger.info("[tg_sender] sub_user empty, skip")
             return None
 
         if re.fullmatch(r"-?\d+", raw):
-            chat_id = int(raw)
-            logger.info(f"[tg_sender] parsed direct chat_id={chat_id}")
-            return chat_id
+            return int(raw)
         if raw.startswith("@"):
-            logger.info(f"[tg_sender] parsed direct username={raw}")
             return raw
 
         parts = [p for p in raw.split(":") if p]
         if len(parts) >= 3 and parts[1] in ("FriendMessage", "GroupMessage"):
             last = parts[-1]
             if re.fullmatch(r"-?\d+", last):
-                chat_id = int(last)
-                logger.info(f"[tg_sender] parsed UMO chat_id={chat_id}")
-                return chat_id
+                return int(last)
 
         for part in reversed(parts):
             if re.fullmatch(r"-?\d+", part):
-                chat_id = int(part)
-                logger.info(f"[tg_sender] parsed segmented chat_id={chat_id}")
-                return chat_id
+                return int(part)
             if part.startswith("@"):
-                logger.info(f"[tg_sender] parsed segmented username={part}")
                 return part
 
-        logger.info("[tg_sender] failed to parse chat_id")
         return None
 
     def _is_video(self, url: str) -> bool:
@@ -81,9 +70,12 @@ class TelegramSender:
         if self.proxy:
             kwargs["proxies"] = {"http": self.proxy, "https": self.proxy}
 
-        logger.info(
-            f"[tg_sender] request method={method} via_proxy={bool(self.proxy)} files={bool(files)}"
-        )
+        # Keep only this telemetry info line for media-group upload requests.
+        if method == "sendMediaGroup" and bool(files):
+            logger.info(
+                f"[tg_sender] request method=sendMediaGroup via_proxy={bool(self.proxy)} files=True"
+            )
+
         if files:
             mime = CurlMime()
             for key, val in payload.items():
@@ -144,24 +136,22 @@ class TelegramSender:
         filename = f"tg_media.{ext}"
         return filename, content, content_type
 
-    def _gif_to_mp4(self, gif_bytes: bytes) -> Optional[bytes]:
+    def _resolve_ffmpeg_path(self) -> Optional[str]:
         base_dir = os.path.dirname(__file__)
         bundled_candidates = [
             os.path.join(base_dir, "ffmpeg", "ffmpeg"),
             os.path.join(base_dir, "ffmpeg", "ffmpeg.exe"),
         ]
-        ffmpeg = None
         for candidate in bundled_candidates:
             if os.path.exists(candidate):
-                ffmpeg = candidate
-                break
-        if not ffmpeg:
-            ffmpeg = shutil.which("ffmpeg")
+                return candidate
+        return shutil.which("ffmpeg")
 
+    def _gif_to_mp4(self, gif_bytes: bytes) -> Optional[bytes]:
+        ffmpeg = self._resolve_ffmpeg_path()
         if not ffmpeg:
-            logger.info("[tg_sender] ffmpeg not found (bundled/system), gif stays document")
             return None
-        logger.info(f"[tg_sender] using ffmpeg={ffmpeg}")
+
         with tempfile.TemporaryDirectory(prefix="tg_gif2mp4_") as tmpdir:
             in_path = os.path.join(tmpdir, "in.gif")
             out_path = os.path.join(tmpdir, "out.mp4")
@@ -198,7 +188,6 @@ class TelegramSender:
 
     def _send_single(self, chat_id: ChatId, caption: str, media_url: str) -> None:
         if self._is_gif(media_url):
-            logger.info("[tg_sender] single media -> sendAnimation")
             self._request(
                 "sendAnimation",
                 {
@@ -211,7 +200,6 @@ class TelegramSender:
             return
 
         if self._is_video(media_url):
-            logger.info("[tg_sender] single media -> sendVideo")
             self._request(
                 "sendVideo",
                 {
@@ -224,7 +212,6 @@ class TelegramSender:
             return
 
         if self._is_image(media_url):
-            logger.info("[tg_sender] single media -> sendPhoto")
             self._request(
                 "sendPhoto",
                 {
@@ -236,7 +223,6 @@ class TelegramSender:
             )
             return
 
-        logger.info("[tg_sender] single media -> sendDocument")
         self._request(
             "sendDocument",
             {
@@ -248,35 +234,7 @@ class TelegramSender:
             },
         )
 
-    def _build_media_group_items(self, media_urls: List[str], caption: str) -> List[Dict]:
-        items: List[Dict] = []
-        for i, media_url in enumerate(media_urls[:10]):
-            if self._is_video(media_url):
-                media_type = "video"
-            elif self._is_gif(media_url):
-                media_type = "document"
-            elif self._is_image(media_url):
-                media_type = "photo"
-            else:
-                media_type = "document"
-
-            item = {"type": media_type, "media": media_url}
-            if i == 0 and caption:
-                item["caption"] = caption
-                item["parse_mode"] = "HTML"
-            items.append(item)
-
-        types = [x.get("type", "") for x in items]
-        if "document" in types and any(t != "document" for t in types):
-            for item in items:
-                item["type"] = "document"
-
-        logger.info(f"[tg_sender] media_group_types={[x.get('type') for x in items]}")
-        return items
-
     def _send_media_group_uploaded(self, chat_id: ChatId, caption: str, media_urls: List[str]) -> None:
-        logger.info("[tg_sender] media_group fallback/upload mode")
-
         media_items: List[Dict] = []
         files: Dict[str, Tuple[str, bytes, str]] = {}
 
@@ -295,7 +253,6 @@ class TelegramSender:
                     content_type = "video/mp4"
                     filename = "tg_media.mp4"
                     media_type = "video"
-                    logger.info("[tg_sender] gif converted to mp4 for media group")
                 else:
                     media_type = "document"
             elif self._is_image(media_url) or content_type.startswith("image/"):
@@ -314,11 +271,9 @@ class TelegramSender:
 
         types = [x.get("type", "") for x in media_items]
         if "document" in types and any(t != "document" for t in types):
-            logger.info("[tg_sender] mixed types with document in upload mode, downgrade all to document")
             for item in media_items:
                 item["type"] = "document"
 
-        logger.info(f"[tg_sender] upload_media_group_types={[x.get('type') for x in media_items]}")
         payload = {
             "chat_id": str(chat_id),
             "media": json.dumps(media_items, ensure_ascii=False),
@@ -328,10 +283,8 @@ class TelegramSender:
     def send_bundle_sync(self, chat_id: ChatId, caption: str, media_urls: List[str]) -> bool:
         caption = (caption or "").strip()
         media_urls = [u.strip() for u in media_urls if (u or "").strip()]
-        logger.info(f"[tg_sender] send_bundle chat_id={chat_id} media_count={len(media_urls)}")
 
         if not media_urls:
-            logger.info("[tg_sender] no media -> sendMessage")
             self._request(
                 "sendMessage",
                 {
@@ -346,14 +299,6 @@ class TelegramSender:
             self._send_single(chat_id, caption, media_urls[0])
             return True
 
-        logger.info("[tg_sender] multi media -> sendMediaGroup")
-        media_group = self._build_media_group_items(media_urls, caption)
-        try:
-            self._request("sendMediaGroup", {"chat_id": chat_id, "media": media_group})
-            return True
-        except Exception as e:
-            logger.warning(f"[tg_sender] sendMediaGroup by url failed, fallback upload: {e}")
-
         self._send_media_group_uploaded(chat_id, caption, media_urls)
         return True
 
@@ -365,5 +310,3 @@ class TelegramSender:
         except Exception as e:
             logger.warning(f"TelegramSender send failed: {e}")
             return False
-
-
