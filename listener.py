@@ -14,7 +14,14 @@ from .bili_client import BiliClient
 from .constant import BANNER_PATH, LOGO_PATH
 from .data_manager import DataManager
 from .renderer import Renderer
-from .utils import create_qrcode, create_render_data, image_to_base64, is_height_valid
+from .utils import (
+    create_qrcode,
+    create_render_data,
+    image_to_base64,
+    is_height_valid,
+    is_telegram_target,
+    should_send_file_for_telegram,
+)
 
 
 class DynamicListener:
@@ -288,7 +295,11 @@ class DynamicListener:
         img_path = await self.renderer.render_dynamic(render_data)
         if img_path:
             url = render_data.get("url", "")
-            if await is_height_valid(img_path):
+            force_file_send = False
+            if is_telegram_target(sub_user):
+                force_file_send = await should_send_file_for_telegram(img_path)
+
+            if (not force_file_send) and await is_height_valid(img_path):
                 ls = [Image.fromFileSystem(img_path)]
             else:
                 timestamp = int(time.time())
@@ -331,9 +342,21 @@ class DynamicListener:
             render_data["qrcode"] = await create_qrcode(link)
             img_path = await self.renderer.render_dynamic(render_data)
             if img_path:
+                force_file_send = False
+                if is_telegram_target(sub_user):
+                    force_file_send = await should_send_file_for_telegram(img_path)
+
+                if (not force_file_send) and await is_height_valid(img_path):
+                    chain_parts = [Image.fromFileSystem(img_path)]
+                else:
+                    timestamp = int(time.time())
+                    filename = f"bilibili_live_{timestamp}.jpg"
+                    chain_parts = [File(file=img_path, name=filename)]
+                chain_parts.append(Plain(f"\n{render_data['url']}"))
+
                 await self.context.send_message(
                     sub_user,
-                    MessageChain().file_image(img_path).message(render_data["url"]),
+                    MessageEventResult(chain=chain_parts).use_t2i(False),
                 )
             else:
                 text = "\n".join(filter(None, render_data.get("text", "").split("\n")))

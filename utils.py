@@ -1,5 +1,6 @@
 import base64
 import io
+import os
 import re
 from urllib.parse import urlparse
 
@@ -8,6 +9,10 @@ import qrcode.constants
 from astrbot.api import logger
 from astrbot.api.all import *
 from PIL import Image as PILImage
+
+TELEGRAM_MAX_PHOTO_BYTES = 10 * 1024 * 1024
+TELEGRAM_MAX_DIMENSION_SUM = 10000
+TELEGRAM_MAX_ASPECT_RATIO = 20.0
 
 
 async def create_render_data() -> dict:
@@ -117,3 +122,45 @@ async def is_height_valid(img_path: str, max_height: int = 25000) -> bool:
     except Exception as e:
         logger.error(f"无法打开图片 {img_path} 进行高度检查: {e}")
         return False
+
+
+def is_telegram_target(target: str) -> bool:
+    """
+    判断 unified_msg_origin 是否为 Telegram 目标。
+    常见格式: telegram:private:xxx / telegram:group:xxx
+    """
+    if not target:
+        return False
+    head = target.split(":", 1)[0].strip().lower()
+    return head == "telegram"
+
+
+async def should_send_file_for_telegram(img_path: str) -> bool:
+    """
+    Telegram photo 约束检测:
+    - 文件体积 <= 10MB
+    - width + height <= 10000
+    - 长宽比 <= 20
+    任一超限则建议按文件发送。
+    """
+    try:
+        if os.path.getsize(img_path) > TELEGRAM_MAX_PHOTO_BYTES:
+            return True
+    except Exception as e:
+        logger.error(f"检查图片大小失败，改为文件发送: {img_path}, err={e}")
+        return True
+
+    try:
+        with PILImage.open(img_path) as img:
+            width, height = img.size
+            if width <= 0 or height <= 0:
+                return True
+            if (width + height) > TELEGRAM_MAX_DIMENSION_SUM:
+                return True
+            ratio = max(width / height, height / width)
+            if ratio > TELEGRAM_MAX_ASPECT_RATIO:
+                return True
+            return False
+    except Exception as e:
+        logger.error(f"检查图片尺寸失败，改为文件发送: {img_path}, err={e}")
+        return True
