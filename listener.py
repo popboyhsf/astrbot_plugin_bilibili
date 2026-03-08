@@ -14,6 +14,7 @@ from .bili_client import BiliClient
 from .constant import BANNER_PATH, LOGO_PATH
 from .data_manager import DataManager
 from .renderer import Renderer
+from .tools.telegram_sender import TelegramSender
 from .utils import create_qrcode, create_render_data, download_url_to_temp_file, image_to_base64
 
 
@@ -45,6 +46,10 @@ class DynamicListener:
         self.dynamic_limit = cfg.get("dynamic_limit", 5)
         self.render_cache: OrderedDict[str, Dict[str, Any]] = OrderedDict()
         self.render_cache_limit = int(cfg.get("render_cache_limit", 32))
+        self.telegram_sender = TelegramSender(
+            bot_token=cfg.get("telegram_bot_token", ""),
+            proxy=cfg.get("telegram_proxy", ""),
+        )
 
     async def start(self):
         """启动后台监听循环（按 UID 任务池调度）。"""
@@ -287,6 +292,67 @@ class DynamicListener:
         if not chain_parts:
             chain_parts.append(Plain("Dynamic fetched, but no sendable content."))
         return chain_parts
+
+    def _build_telegram_caption(self, render_data: Dict[str, Any]) -> str:
+        parts: List[str] = []
+        title = (render_data.get("title") or "").strip()
+        text = (render_data.get("text") or "").replace("<br>", "\n").strip()
+        url = (render_data.get("url") or "").strip()
+        if title:
+            parts.append(title)
+        if text:
+            parts.append(text)
+        if url:
+            parts.append(url)
+
+        forward = render_data.get("forward") or {}
+        f_title = (forward.get("title") or "").strip()
+        f_text = (forward.get("text") or "").replace("<br>", "\n").strip()
+        if f_title or f_text:
+            parts.append("--- forward ---")
+            if f_title:
+                parts.append(f_title)
+            if f_text:
+                parts.append(f_text)
+        return "\n".join([x for x in parts if x]).strip()
+
+    def _collect_telegram_media_urls(self, render_data: Dict[str, Any]) -> List[str]:
+        urls: List[str] = []
+        for u in (render_data.get("image_urls") or []):
+            if u:
+                urls.append(u)
+        forward = render_data.get("forward") or {}
+        for u in (forward.get("image_urls") or []):
+            if u:
+                urls.append(u)
+
+        seen = set()
+        out: List[str] = []
+        for u in urls:
+            if u in seen:
+                continue
+            seen.add(u)
+            out.append(u)
+        return out
+
+    async def _try_send_via_telegram(self, sub_user: str, render_data: Dict[str, Any]) -> bool:
+        sender = self.telegram_sender
+        if not sender or not sender.enabled:
+            logger.info("[tg_sender] disabled or token missing, skip")
+            return False
+
+        chat_id = sender.parse_chat_id_from_sub_user(sub_user)
+        if chat_id is None:
+            logger.info(f"[tg_sender] chat_id parse failed for sub_user={sub_user}, fallback")
+            return False
+
+        caption = self._build_telegram_caption(render_data)
+        media_urls = self._collect_telegram_media_urls(render_data)
+        logger.info(f"[tg_sender] trying telegram send chat_id={chat_id} media_count={len(media_urls)}")
+        ok = await sender.send_bundle(chat_id=chat_id, caption=caption, media_urls=media_urls)
+        logger.info(f"[tg_sender] telegram send result={ok}")
+        return ok
+
     async def _send_dynamic(
         self, sub_user: str, chain_parts: list, send_node: bool = False
     ):
@@ -330,6 +396,9 @@ class DynamicListener:
 
         send_node_flag = self.node
         if not self.merge_card_mode:
+            if await self._try_send_via_telegram(sub_user, render_data):
+                return
+
             ls = await self._compose_element_chain(render_data)
             await self.context.send_message(
                 sub_user,
@@ -393,6 +462,9 @@ class DynamicListener:
         if render_data["text"]:
             render_data["qrcode"] = await create_qrcode(link)
             if not self.merge_card_mode:
+                if await self._try_send_via_telegram(sub_user, render_data):
+                    return
+
                 chain_parts = await self._compose_element_chain(render_data)
                 await self.context.send_message(
                     sub_user,

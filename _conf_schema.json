@@ -1,70 +1,83 @@
 {
-    "sessdata": {
-        "description": "sessdata",
-        "type": "string",
-        "hint": "sessdata 获取请查看 readme",
-        "obvious_hint": true
-    },
-    "proxy": {
-        "description": "proxy",
-        "type": "string",
-        "hint": "Bilibili API 请求代理地址。示例: http://127.0.0.1:7890 或 socks5://127.0.0.1:1080，留空则直连。",
-        "default": ""
-    },
-    "interval_mins": {
-        "description": "interval_mins",
-        "type": "int",
-        "hint": "单个UP主任务的检测周期，分钟数",
-        "obvious_hint": true,
-        "default": 5
-    },
-    "task_gap_secs": {
-        "description": "task_gap_secs",
-        "type": "int",
-        "hint": "相邻两个UP主任务的最小间隔，秒数",
-        "default": 20
-    },
-    "merge_card_mode": {
-        "description": "merge_card_mode",
-        "type": "bool",
-        "hint": "是否合成一张卡",
-        "default": true
-    },
-    "rai": {
-        "description": "render_as_image",
-        "type": "bool",
-        "hint": "是否以图片形式渲染输出(仅对图文动态生效)",
-        "default": true
-    },
-    "renderer_template": {
-        "description": "renderer_template",
-        "type": "string",
-        "hint": "渲染模板",
-        "options": ["template_1", "template_2", "simple"],
-        "default": "template_2"
-    },
-    "node": {
-        "description": "node",
-        "type": "bool",
-        "hint": "是否以转发消息形式推送(仅对图文动态生效)",
-        "default": false
-    },
-    "enable_parse_miniapp": {
-        "description": "enable_parse_miniapp",
-        "type": "bool",
-        "hint": "是否解析小程序",
-        "default": true
-    },
-    "enable_parse_BV": {
-        "description": "enable_parse_BV",
-        "type": "bool",
-        "hint": "是否解析B站视频链接",
-        "default": true
-    },
-    "dynamic_limit": {
-        "description": "dynamic_limit",
-        "type": "int",
-        "hint": "每个UP主的单次动态推送数量限制",
-        "default": 5
-    }
+  "sessdata": {
+    "description": "sessdata",
+    "type": "string",
+    "hint": "Bilibili sessdata; see README for how to get it",
+    "obvious_hint": true
+  },
+  "telegram_bot_token": {
+    "description": "telegram_bot_token",
+    "type": "string",
+    "hint": "Telegram Bot Token from @BotFather",
+    "default": "",
+    "obvious_hint": true
+  },
+  "telegram_proxy": {
+    "description": "telegram_proxy",
+    "type": "string",
+    "hint": "Telegram API HTTP proxy, e.g. http://127.0.0.1:7890",
+    "default": ""
+  },
+  "proxy": {
+    "description": "proxy",
+    "type": "string",
+    "hint": "Bilibili API proxy; e.g. http://127.0.0.1:7890 or socks5://127.0.0.1:1080",
+    "default": ""
+  },
+  "interval_mins": {
+    "description": "interval_mins",
+    "type": "int",
+    "hint": "Polling interval per UP in minutes",
+    "obvious_hint": true,
+    "default": 5
+  },
+  "task_gap_secs": {
+    "description": "task_gap_secs",
+    "type": "int",
+    "hint": "Minimum gap between two UID tasks in seconds",
+    "default": 20
+  },
+  "merge_card_mode": {
+    "description": "merge_card_mode",
+    "type": "bool",
+    "hint": "true: merged card mode; false: element/file mode",
+    "default": true
+  },
+  "rai": {
+    "description": "render_as_image",
+    "type": "bool",
+    "hint": "Render dynamic to image for draw/word types",
+    "default": true
+  },
+  "renderer_template": {
+    "description": "renderer_template",
+    "type": "string",
+    "hint": "Render template",
+    "options": ["template_1", "template_2", "simple"],
+    "default": "template_2"
+  },
+  "node": {
+    "description": "node",
+    "type": "bool",
+    "hint": "Use forward/node style when sending",
+    "default": false
+  },
+  "enable_parse_miniapp": {
+    "description": "enable_parse_miniapp",
+    "type": "bool",
+    "hint": "Enable QQ miniapp parse",
+    "default": true
+  },
+  "enable_parse_BV": {
+    "description": "enable_parse_BV",
+    "type": "bool",
+    "hint": "Enable BV parse",
+    "default": true
+  },
+  "dynamic_limit": {
+    "description": "dynamic_limit",
+    "type": "int",
+    "hint": "Max number of dynamics sent per UP each check",
+    "default": 5
+  }
 }
