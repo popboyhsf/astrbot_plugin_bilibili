@@ -1,4 +1,4 @@
-import asyncio
+﻿import asyncio
 import re
 import time
 import traceback
@@ -585,10 +585,13 @@ class DynamicListener:
             logger.info(f"图文动态 {dyn_id} 为充电专属。")
             return (None, dyn_id)
 
-        opus = major.get("opus", {})
-        summary = opus.get("summary", {})
-        summary_text = summary.get("text", "")
-        rich_nodes = summary.get("rich_text_nodes", [])
+        opus = major.get("opus") or {}
+        desc = item.get("modules", {}).get("module_dynamic", {}).get("desc", {}) or {}
+        summary = opus.get("summary") or {}
+        summary_text = summary.get("text", "") or desc.get("text", "")
+        rich_nodes = summary.get("rich_text_nodes", []) or desc.get(
+            "rich_text_nodes", []
+        )
         first_node_text = rich_nodes[0].get("text") if rich_nodes else ""
 
         if first_node_text == "互动抽奖" and "lottery" in filter_types:

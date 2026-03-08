@@ -1,4 +1,4 @@
-import asyncio
+﻿import asyncio
 import os
 from typing import Any, Dict
 
@@ -151,20 +151,48 @@ class Renderer:
             "DYNAMIC_TYPE_WORD",
             "DYNAMIC_TYPE_ARTICLE",
         ):
-            # 图文动态
-            opus = item["modules"]["module_dynamic"]["major"]["opus"]
-            summary = opus["summary"]
-            jump_url = opus["jump_url"]
-            topic = item["modules"]["module_dynamic"]["topic"]
+            # 图文动态（兼容 opus 缺失场景）
+            module_dynamic = item.get("modules", {}).get("module_dynamic", {}) or {}
+            major = module_dynamic.get("major", {}) or {}
+            opus = major.get("opus") or {}
+            desc = module_dynamic.get("desc", {}) or {}
+            topic = module_dynamic.get("topic")
 
-            render_data["summary"] = summary["text"]
+            summary = opus.get("summary") or {
+                "text": desc.get("text", ""),
+                "rich_text_nodes": desc.get("rich_text_nodes", []) or [],
+            }
+            jump_url = opus.get("jump_url", "")
+            render_data["summary"] = summary.get("text", "")
             render_data["text"] = await parse_rich_text(summary, topic)
-            render_data["title"] = opus["title"]
-            render_data["image_urls"] = [pic["url"] for pic in opus["pics"][:9]]
+            render_data["title"] = opus.get("title", "")
+
+            pics = []
+            for pic in (opus.get("pics") or [])[:9]:
+                if isinstance(pic, dict):
+                    url = pic.get("url")
+                    if url:
+                        pics.append(url)
+            if not pics:
+                draw = major.get("draw", {}) or {}
+                for pic in (draw.get("items") or [])[:9]:
+                    if isinstance(pic, dict):
+                        url = pic.get("src") or pic.get("url")
+                        if url:
+                            pics.append(url)
+            render_data["image_urls"] = pics
             if not render_data["image_urls"] and self.rai:
                 render_data["image_urls"] = [await image_to_base64(LOGO_PATH)]
             if not is_forward:
-                url = f"https:{jump_url}"
+                if jump_url:
+                    url = (
+                        jump_url
+                        if jump_url.startswith(("http://", "https://"))
+                        else f"https:{jump_url}"
+                    )
+                else:
+                    dyn_id = item.get("id_str", "")
+                    url = f"https://t.bilibili.com/{dyn_id}" if dyn_id else ""
                 render_data["qrcode"] = await create_qrcode(url)
                 render_data["url"] = url
             # logger.info(f"返回图文动态 {dyn_id}。")
