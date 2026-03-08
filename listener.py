@@ -1,4 +1,4 @@
-import asyncio
+﻿import asyncio
 import re
 import time
 import traceback
@@ -48,6 +48,14 @@ class DynamicListener:
         self.task_gap_secs = self._parse_float(cfg.get("task_gap_secs"), 20, minimum=0)
         self.rai = cfg.get("rai", True)
         self.node = cfg.get("node", False)
+        self.telegram_media_group = cfg.get("telegram_media_group", False)
+        try:
+            self.telegram_media_group_min_count = int(
+                cfg.get("telegram_media_group_min_count", 2)
+            )
+        except (TypeError, ValueError):
+            self.telegram_media_group_min_count = 2
+        self.telegram_media_group_min_count = max(1, self.telegram_media_group_min_count)
         self.dynamic_limit = cfg.get("dynamic_limit", 5)
         self.render_cache: OrderedDict[str, Dict[str, Any]] = OrderedDict()
         self.render_cache_limit = int(cfg.get("render_cache_limit", 32))
@@ -241,10 +249,36 @@ class DynamicListener:
             ls.append(Image.fromURL(pic))
         return ls
 
+    def _compose_telegram_media_dynamic(
+        self, render_data: Dict[str, Any]
+    ) -> Optional[list]:
+        """构造 Telegram 图文动态多媒体消息链（多图/GIF）。"""
+        image_urls = [
+            url
+            for url in (render_data.get("image_urls") or [])
+            if isinstance(url, str) and url.startswith(("http://", "https://"))
+        ]
+        if not image_urls:
+            return None
+
+        name = render_data.get("name", "")
+        summary = render_data.get("summary") or re.sub(
+            r"<br\s*/?>", "\n", render_data.get("text", "")
+        )
+        url = render_data.get("url", "")
+
+        ls = [Plain(f"📣 UP 主 「{name}」 发布了新图文动态:\n{summary}")]
+        for pic in image_urls:
+            ls.append(Image.fromURL(pic))
+        if url:
+            ls.append(Plain(f"\n{url}"))
+        return ls
+
     async def _send_dynamic(
         self, sub_user: str, chain_parts: list, send_node: bool = False
     ):
-        if self.node or send_node:
+        use_node = (self.node or send_node) and (not is_telegram_target(sub_user))
+        if use_node:
             qqNode = Node(
                 uin=0,
                 name="AstrBot",
@@ -282,6 +316,32 @@ class DynamicListener:
             return
 
         send_node_flag = self.node
+        is_telegram = is_telegram_target(sub_user)
+        dynamic_type = render_data.get("type")
+
+        media_count = len(
+            [
+                url
+                for url in (render_data.get("image_urls") or [])
+                if isinstance(url, str) and url.startswith(("http://", "https://"))
+            ]
+        )
+        if (
+            self.telegram_media_group
+            and is_telegram
+            and dynamic_type in (
+                "DYNAMIC_TYPE_DRAW",
+                "DYNAMIC_TYPE_WORD",
+                "DYNAMIC_TYPE_ARTICLE",
+            )
+            and media_count >= self.telegram_media_group_min_count
+        ):
+            ls = self._compose_telegram_media_dynamic(render_data)
+            if ls:
+                await self._send_dynamic(sub_user, ls, send_node=False)
+                self._cache_render(dyn_id, ls, send_node=False)
+                return
+
         # 非图文混合模式
         if not self.rai and render_data.get("type") in (
             "DYNAMIC_TYPE_DRAW",
@@ -574,3 +634,10 @@ class DynamicListener:
         render_data = await self.renderer.build_render_data(item)
         render_data["uid"] = uid
         return (render_data, dyn_id)
+
+
+
+
+
+
+

@@ -1,4 +1,4 @@
-{
+﻿{
     "sessdata": {
         "description": "sessdata",
         "type": "string",
@@ -43,6 +43,18 @@
         "hint": "是否以转发消息形式推送(仅对图文动态生效)",
         "default": false
     },
+    "telegram_media_group": {
+        "description": "telegram_media_group",
+        "type": "bool",
+        "hint": "Telegram图文动态是否改为多媒体组发送(多图/GIF，不走合成大图)",
+        "default": false
+    },
+    "telegram_media_group_min_count": {
+        "description": "telegram_media_group_min_count",
+        "type": "int",
+        "hint": "仅当图文动态图片数量>=该值时，Telegram才走多媒体组发送",
+        "default": 2
+    },
     "enable_parse_miniapp": {
         "description": "enable_parse_miniapp",
         "type": "bool",
@@ -62,3 +74,5 @@
         "default": 5
     }
 }
+
+

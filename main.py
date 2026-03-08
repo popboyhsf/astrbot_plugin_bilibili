@@ -1,4 +1,4 @@
-import asyncio
+﻿import asyncio
 import json
 import os
 import re
@@ -539,6 +539,64 @@ class Main(Star):
 
         await self.dynamic_listener._handle_new_dynamic(sub_user, render_data, dyn_id)
 
+        return None
+
+    @command("bili_sub_opus", alias={"动态链接测试"})
+    async def sub_opus_test(self, event: AstrMessageEvent, url: str):
+        """测试指定 opus/动态链接。读取该条动态并推送给当前会话。"""
+        sub_user = event.unified_msg_origin
+        target = (url or "").strip()
+        if not target:
+            return MessageEventResult().message(
+                "请提供动态链接，例如: /bili_sub_opus https://www.bilibili.com/opus/1177345027311927304"
+            )
+
+        dynamic_id = ""
+        if target.isdigit():
+            dynamic_id = target
+        else:
+            match = re.search(r"(?:bilibili\.com/opus/|t\.bilibili\.com/)(\d+)", target)
+            if match:
+                dynamic_id = match.group(1)
+
+        if not dynamic_id:
+            return MessageEventResult().message(
+                "链接格式不正确，请传入 opus 或 t.bilibili.com 动态链接。"
+            )
+
+        item = await self.bili_client.get_dynamic_detail(dynamic_id)
+        if not item:
+            return MessageEventResult().message(
+                "读取该条动态失败，可能链接无效、动态不可见，或接口返回异常。"
+            )
+
+        author = (item.get("modules", {}).get("module_author") or {})
+        uid = str(author.get("mid") or "")
+        result_list = await self.dynamic_listener._parse_and_filter_dynamics(
+            {"items": [item]},
+            {
+                "uid": uid,
+                "filter_types": [],
+                "filter_regex": [],
+                "last": "",
+                "recent_ids": [],
+            },
+        )
+
+        render_data = None
+        dyn_id = dynamic_id
+        for maybe_render_data, maybe_dyn_id in result_list or []:
+            if maybe_render_data:
+                render_data = maybe_render_data
+                dyn_id = maybe_dyn_id or dynamic_id
+                break
+
+        if not render_data:
+            return MessageEventResult().message(
+                "该动态暂不支持渲染或无可推送内容。"
+            )
+
+        await self.dynamic_listener._handle_new_dynamic(sub_user, render_data, dyn_id)
         return None
 
     async def terminate(self):

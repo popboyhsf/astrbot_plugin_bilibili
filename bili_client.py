@@ -1,4 +1,4 @@
-from typing import Any, Awaitable, Callable, Dict, Optional, Tuple
+﻿from typing import Any, Awaitable, Callable, Dict, Optional, Tuple
 
 import aiohttp
 from astrbot.api import logger
@@ -143,6 +143,48 @@ class BiliClient:
         except Exception as e:
             logger.error(f"获取用户动态失败 (UID: {uid}): {e}")
             return None
+
+    async def get_dynamic_detail(self, dynamic_id: str) -> Optional[Dict[str, Any]]:
+        """
+        根据动态ID获取单条动态详情。
+        """
+        url = "https://api.bilibili.com/x/polymer/web-dynamic/v1/detail"
+        params = {"id": str(dynamic_id)}
+        headers: Dict[str, str] = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0.0.0 Safari/537.36"
+        }
+        cookies: Dict[str, str] = {}
+        if self.credential and getattr(self.credential, "sessdata", None):
+            cookies["SESSDATA"] = self.credential.sessdata
+
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(
+                    url=url,
+                    params=params,
+                    headers=headers,
+                    cookies=cookies or None,
+                    proxy=self.proxy or None,
+                    timeout=15,
+                ) as response:
+                    data = await response.json(content_type=None)
+        except Exception as e:
+            logger.error(f"获取动态详情失败 (dynamic_id: {dynamic_id}): {e}")
+            return None
+
+        if not isinstance(data, dict):
+            return None
+        if data.get("code") not in (0, None):
+            logger.error(
+                f"获取动态详情失败 (dynamic_id: {dynamic_id}), code={data.get('code')}, message={data.get('message')}"
+            )
+            return None
+
+        detail = data.get("data") or {}
+        item = detail.get("item")
+        if not isinstance(item, dict):
+            return None
+        return item
 
     async def get_live_info(self, uid: int) -> Optional[Dict[str, Any]]:
         """
