@@ -1,4 +1,4 @@
-﻿import asyncio
+import asyncio
 import json
 import os
 import re
@@ -187,51 +187,17 @@ class TelegramSender:
                 return f.read()
 
     def _send_single(self, chat_id: ChatId, caption: str, media_url: str) -> None:
-        if self._is_gif(media_url):
-            self._request(
-                "sendAnimation",
-                {
-                    "chat_id": chat_id,
-                    "animation": media_url,
-                    "caption": caption or "",
-                    "parse_mode": "HTML",
-                },
-            )
-            return
-
-        if self._is_video(media_url):
-            self._request(
-                "sendVideo",
-                {
-                    "chat_id": chat_id,
-                    "video": media_url,
-                    "caption": caption or "",
-                    "parse_mode": "HTML",
-                },
-            )
-            return
-
-        if self._is_image(media_url):
-            self._request(
-                "sendPhoto",
-                {
-                    "chat_id": chat_id,
-                    "photo": media_url,
-                    "caption": caption or "",
-                    "parse_mode": "HTML",
-                },
-            )
-            return
-
+        filename, content, content_type = self._download_media_bytes(media_url)
         self._request(
             "sendDocument",
             {
-                "chat_id": chat_id,
-                "document": media_url,
+                "chat_id": str(chat_id),
+                "document": "attach://file0",
                 "caption": caption or "",
                 "parse_mode": "HTML",
                 "disable_content_type_detection": True,
             },
+            files={"file0": (filename, content, content_type)},
         )
 
     def _send_media_group_uploaded(self, chat_id: ChatId, caption: str, media_urls: List[str]) -> None:
