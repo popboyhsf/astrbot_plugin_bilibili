@@ -14,7 +14,7 @@ from curl_cffi import CurlMime, requests
 
 ChatId = Union[int, str]
 PHOTO_AS_DOCUMENT_MAX_BYTES = 3 * 1024 * 1024
-PHOTO_AS_DOCUMENT_MAX_DIMENSION = 1280
+PHOTO_AS_DOCUMENT_MAX_DIMENSION = 2000
 
 
 class TelegramSender:
