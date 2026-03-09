@@ -367,15 +367,18 @@ class TelegramSender:
             file_key = f"file{idx}"
             files[file_key] = (filename, content, content_type)
             item = {"type": media_type, "media": f"attach://{file_key}"}
-            if idx == 0 and caption:
-                item["caption"] = caption
-                item["parse_mode"] = "HTML"
             media_items.append(item)
 
         types = [x.get("type", "") for x in media_items]
         if "document" in types and any(t != "document" for t in types):
             for item in media_items:
                 item["type"] = "document"
+            types = ["document"] * len(media_items)
+
+        if caption and media_items:
+            caption_idx = len(media_items) - 1 if all(t == "document" for t in types) else 0
+            media_items[caption_idx]["caption"] = caption
+            media_items[caption_idx]["parse_mode"] = "HTML"
 
         payload = {
             "chat_id": str(chat_id),
