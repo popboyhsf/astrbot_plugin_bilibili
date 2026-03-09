@@ -3,6 +3,7 @@ import json
 import os
 import re
 import shutil
+import struct
 import subprocess
 import tempfile
 from typing import Dict, List, Optional, Tuple, Union
@@ -12,6 +13,8 @@ from curl_cffi import CurlMime, requests
 
 
 ChatId = Union[int, str]
+PHOTO_AS_DOCUMENT_MAX_BYTES = 3 * 1024 * 1024
+PHOTO_AS_DOCUMENT_MAX_DIMENSION = 1280
 
 
 class TelegramSender:
@@ -105,6 +108,93 @@ class TelegramSender:
         if not data.get("ok"):
             raise RuntimeError(f"Telegram API error: method={method}, data={data}")
         return data
+    def _read_jpeg_size(self, content: bytes) -> Optional[Tuple[int, int]]:
+        if len(content) < 4 or content[:2] != b"\xff\xd8":
+            return None
+
+        idx = 2
+        while idx + 9 < len(content):
+            if content[idx] != 0xFF:
+                idx += 1
+                continue
+
+            marker = content[idx + 1]
+            idx += 2
+            if marker in (0xD8, 0xD9):
+                continue
+            if idx + 2 > len(content):
+                return None
+
+            block_len = int.from_bytes(content[idx : idx + 2], "big")
+            if block_len < 2 or idx + block_len > len(content):
+                return None
+
+            if marker in (
+                0xC0,
+                0xC1,
+                0xC2,
+                0xC3,
+                0xC5,
+                0xC6,
+                0xC7,
+                0xC9,
+                0xCA,
+                0xCB,
+                0xCD,
+                0xCE,
+                0xCF,
+            ):
+                if idx + 7 > len(content):
+                    return None
+                height = int.from_bytes(content[idx + 3 : idx + 5], "big")
+                width = int.from_bytes(content[idx + 5 : idx + 7], "big")
+                return width, height
+
+            idx += block_len
+
+        return None
+
+    def _read_image_size(self, content: bytes, content_type: str) -> Optional[Tuple[int, int]]:
+        if content.startswith(b"\x89PNG\r\n\x1a\n") and len(content) >= 24:
+            width = struct.unpack(">I", content[16:20])[0]
+            height = struct.unpack(">I", content[20:24])[0]
+            return width, height
+
+        if content[:6] in (b"GIF87a", b"GIF89a") and len(content) >= 10:
+            width = int.from_bytes(content[6:8], "little")
+            height = int.from_bytes(content[8:10], "little")
+            return width, height
+
+        if content.startswith(b"RIFF") and len(content) >= 30 and content[8:12] == b"WEBP":
+            chunk = content[12:16]
+            if chunk == b"VP8X" and len(content) >= 30:
+                width = 1 + int.from_bytes(content[24:27], "little")
+                height = 1 + int.from_bytes(content[27:30], "little")
+                return width, height
+            if chunk == b"VP8L" and len(content) >= 25:
+                bits = int.from_bytes(content[21:25], "little")
+                width = (bits & 0x3FFF) + 1
+                height = ((bits >> 14) & 0x3FFF) + 1
+                return width, height
+
+        if content_type == "image/jpeg" or content[:2] == b"\xff\xd8":
+            return self._read_jpeg_size(content)
+
+        return None
+
+    def _should_send_image_as_document(self, content: bytes, content_type: str) -> bool:
+        if len(content) > PHOTO_AS_DOCUMENT_MAX_BYTES:
+            return True
+
+        image_size = self._read_image_size(content, content_type)
+        if not image_size:
+            return False
+
+        width, height = image_size
+        return (
+            width > PHOTO_AS_DOCUMENT_MAX_DIMENSION
+            or height > PHOTO_AS_DOCUMENT_MAX_DIMENSION
+        )
 
     def _download_media_bytes(self, media_url: str) -> Tuple[str, bytes, str]:
         kwargs = {"timeout": self.timeout_secs}
@@ -187,17 +277,61 @@ class TelegramSender:
                 return f.read()
 
     def _send_single(self, chat_id: ChatId, caption: str, media_url: str) -> None:
-        filename, content, content_type = self._download_media_bytes(media_url)
+        if self._is_image(media_url):
+            filename, content, content_type = self._download_media_bytes(media_url)
+            method = "sendDocument"
+            payload = {
+                "chat_id": str(chat_id),
+                "caption": caption or "",
+                "parse_mode": "HTML",
+            }
+            if self._should_send_image_as_document(content, content_type):
+                payload["document"] = "attach://file0"
+                payload["disable_content_type_detection"] = True
+            else:
+                payload["photo"] = "attach://file0"
+                method = "sendPhoto"
+
+            self._request(
+                method,
+                payload,
+                files={"file0": (filename, content, content_type)},
+            )
+            return
+
+        if self._is_gif(media_url):
+            self._request(
+                "sendAnimation",
+                {
+                    "chat_id": chat_id,
+                    "animation": media_url,
+                    "caption": caption or "",
+                    "parse_mode": "HTML",
+                },
+            )
+            return
+
+        if self._is_video(media_url):
+            self._request(
+                "sendVideo",
+                {
+                    "chat_id": chat_id,
+                    "video": media_url,
+                    "caption": caption or "",
+                    "parse_mode": "HTML",
+                },
+            )
+            return
+
         self._request(
             "sendDocument",
             {
-                "chat_id": str(chat_id),
-                "document": "attach://file0",
+                "chat_id": chat_id,
+                "document": media_url,
                 "caption": caption or "",
                 "parse_mode": "HTML",
                 "disable_content_type_detection": True,
             },
-            files={"file0": (filename, content, content_type)},
         )
 
     def _send_media_group_uploaded(self, chat_id: ChatId, caption: str, media_urls: List[str]) -> None:
@@ -222,10 +356,13 @@ class TelegramSender:
                 else:
                     media_type = "document"
             elif self._is_image(media_url) or content_type.startswith("image/"):
-                media_type = "photo"
-                if not re.search(r"\.(jpg|jpeg|png|webp)$", filename, re.IGNORECASE):
-                    filename = "tg_media.jpg"
-                    content_type = "image/jpeg"
+                if self._should_send_image_as_document(content, content_type):
+                    media_type = "document"
+                else:
+                    media_type = "photo"
+                    if not re.search(r"\.(jpg|jpeg|png|webp)$", filename, re.IGNORECASE):
+                        filename = "tg_media.jpg"
+                        content_type = "image/jpeg"
 
             file_key = f"file{idx}"
             files[file_key] = (filename, content, content_type)
