@@ -15,6 +15,8 @@ from curl_cffi import CurlMime, requests
 ChatId = Union[int, str]
 PHOTO_AS_DOCUMENT_MAX_BYTES = 3 * 1024 * 1024
 PHOTO_AS_DOCUMENT_MAX_DIMENSION = 2000
+TELEGRAM_MEDIA_CAPTION_LIMIT = 1024
+TELEGRAM_TEXT_LIMIT = 4096
 
 
 class TelegramSender:
@@ -386,11 +388,40 @@ class TelegramSender:
         }
         self._request("sendMediaGroup", payload, files=files)
 
+    def _truncate_text_preserve_url(self, text: str, limit: int) -> str:
+        text = (text or "").strip()
+        if len(text) <= limit:
+            return text
+
+        lines = [line.rstrip() for line in text.splitlines()]
+        while lines and not lines[-1]:
+            lines.pop()
+
+        tail = ""
+        if lines and re.fullmatch(r"https?://\S+", lines[-1]):
+            tail = lines.pop()
+
+        head = "\n".join(lines).strip()
+        if not tail:
+            return text[: max(limit - 3, 0)].rstrip() + ("..." if limit > 0 else "")
+
+        separator = "\n" if head else ""
+        reserved = len(tail) + len(separator)
+        if reserved >= limit:
+            return tail[:limit]
+
+        available = limit - reserved
+        if len(head) > available:
+            head = head[: max(available - 3, 0)].rstrip() + ("..." if available > 0 else "")
+
+        return f"{head}{separator}{tail}" if head else tail
+
     def send_bundle_sync(self, chat_id: ChatId, caption: str, media_urls: List[str]) -> bool:
         caption = (caption or "").strip()
         media_urls = [u.strip() for u in media_urls if (u or "").strip()]
 
         if not media_urls:
+            caption = self._truncate_text_preserve_url(caption, TELEGRAM_TEXT_LIMIT)
             self._request(
                 "sendMessage",
                 {
@@ -401,6 +432,7 @@ class TelegramSender:
             )
             return True
 
+        caption = self._truncate_text_preserve_url(caption, TELEGRAM_MEDIA_CAPTION_LIMIT)
         if len(media_urls) == 1:
             self._send_single(chat_id, caption, media_urls[0])
             return True

@@ -335,6 +335,21 @@ class DynamicListener:
             out.append(u)
         return out
 
+    async def _resolve_dynamic_url(
+        self, item: Dict[str, Any], fallback_dyn_id: str = ""
+    ) -> str:
+        """Resolve the best share URL for a dynamic item."""
+        if not item:
+            return f"https://t.bilibili.com/{fallback_dyn_id}" if fallback_dyn_id else ""
+
+        render_data = await self.renderer.build_render_data(item)
+        url = (render_data.get("url") or "").strip()
+        if url:
+            return url
+
+        dyn_id = item.get("id_str") or fallback_dyn_id
+        return f"https://t.bilibili.com/{dyn_id}" if dyn_id else ""
+
     async def _try_send_via_telegram(self, sub_user: str, render_data: Dict[str, Any]) -> bool:
         sender = self.telegram_sender
         if not sender or not sender.enabled:
@@ -622,15 +637,11 @@ class DynamicListener:
 
         render_data = await self.renderer.build_render_data(item)
         render_data["uid"] = uid
-        render_data["url"] = f"https://t.bilibili.com/{dyn_id}"
-        render_data["qrcode"] = await create_qrcode(render_data["url"])
-
-        render_forward = await self.renderer.build_render_data(
-            item.get("orig", {}), is_forward=True
-        )
-        if render_forward.get("image_urls"):
-            render_forward["image_urls"] = [render_forward["image_urls"][0]]
-        render_data["forward"] = render_forward
+        orig_item = item.get("orig", {}) or {}
+        orig_url = await self._resolve_dynamic_url(orig_item, fallback_dyn_id=dyn_id)
+        render_data["url"] = orig_url
+        render_data["qrcode"] = await create_qrcode(orig_url)
+        render_data.pop("forward", None)
         return (render_data, dyn_id)
 
     async def _handle_draw_or_word_dynamic(
